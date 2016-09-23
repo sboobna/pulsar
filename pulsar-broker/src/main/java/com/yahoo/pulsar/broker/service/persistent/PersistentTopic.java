@@ -74,6 +74,7 @@ import com.yahoo.pulsar.broker.service.BrokerServiceException;
 import com.yahoo.pulsar.broker.service.Producer;
 import com.yahoo.pulsar.broker.service.ServerCnx;
 import com.yahoo.pulsar.broker.service.Topic;
+import com.yahoo.pulsar.broker.service.persistent.PersistentReplicator.State;
 import com.yahoo.pulsar.broker.service.BrokerServiceException.ConsumerBusyException;
 import com.yahoo.pulsar.broker.service.BrokerServiceException.NamingException;
 import com.yahoo.pulsar.broker.service.BrokerServiceException.PersistenceException;
@@ -651,6 +652,12 @@ public class PersistentTopic implements Topic, AddEntryCallback {
 
         replicators.get(remoteCluster).disconnect().thenRun(() -> {
 
+            PersistentReplicator replicator = replicators.get(remoteCluster);
+            if (replicator != null && (replicator.getState() == State.Started || replicator.getState() == State.Starting)) {
+                // the replicator was started again after getting disconnected
+                future.completeExceptionally(new BrokerServiceException("Replicator started immediately after getting disconnected"));
+                return;
+            }
             ledger.asyncDeleteCursor(name, new DeleteCursorCallback() {
                 @Override
                 public void deleteCursorComplete(Object ctx) {
@@ -660,15 +667,18 @@ public class PersistentTopic implements Topic, AddEntryCallback {
 
                 @Override
                 public void deleteCursorFailed(ManagedLedgerException exception, Object ctx) {
-                    log.error("[{}] Failed to delete cursor {}", topic, name);
+                    log.error("[{}] Failed to delete cursor {}", topic, name, exception);
                     // Connect the producers back
-                    replicators.get(remoteCluster).startProducer();
+                    PersistentReplicator replicator = replicators.get(remoteCluster);
+                    if (replicator != null) {
+                        replicator.startProducer();
+                    }
                     future.completeExceptionally(new PersistenceException(exception));
                 }
             }, null);
 
         }).exceptionally(e -> {
-            log.error("[{}] Failed to close replication producer {}", topic, name);
+            log.error("[{}] Failed to close replication producer {}", topic, name, e);
             future.completeExceptionally(e);
             return null;
         });

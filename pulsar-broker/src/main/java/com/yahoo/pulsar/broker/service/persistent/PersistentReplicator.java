@@ -672,6 +672,10 @@ public class PersistentReplicator implements ReadEntriesCallback, DeleteCallback
         return producer != null && producer.isWritable();
     }
 
+    public State getState() {
+        return state.get();
+    }
+
     public static void setReplicatorQueueSize(int queueSize) {
         producerConfiguration.setMaxPendingMessages(queueSize);
     }
